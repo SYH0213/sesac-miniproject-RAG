@@ -143,3 +143,5 @@ Return exactly one code block:
 
 # === Run ===
 # if __name__ == "__main__": launch(server_name="0.0.0.0", server_port=7860)
+
+반드시 주석은 한글로 달것

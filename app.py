@@ -360,4 +360,4 @@ def create_ui():
 # =====================================================================================
 if __name__ == "__main__":
     app_ui = create_ui()
-    app_ui.launch(server_name="0.0.0.0", server_port=7860)
+    app_ui.launch(server_port=7860)
