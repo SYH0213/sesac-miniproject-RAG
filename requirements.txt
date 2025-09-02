@@ -1,0 +1,11 @@
+gradio
+langchain
+langchain-community
+readability-lxml
+trafilatura
+rank-bm25
+keybert
+scikit-learn
+beautifulsoup4
+lxml
+html5lib
