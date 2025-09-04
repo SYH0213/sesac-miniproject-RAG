@@ -1,3 +1,46 @@
+# Update Log v1.5
+
+This version introduces significant enhancements to the RAG application's document processing and conversational capabilities. A new application, `rag_gradio_llamaparser_app.py`, has been created to demonstrate these features.
+
+## Core Enhancements
+
+-   **LlamaParse Integration for Robust Document Processing:**
+    -   Switched from `PyMuPDF` to `LlamaParse` for PDF document parsing. `LlamaParse` provides superior extraction of complex layouts, especially tables, ensuring cleaner and more accurate input for the RAG system.
+    -   Implemented a caching mechanism: `LlamaParse` is called only once to convert the PDF into a Markdown file (`llamaparse_output_full.md`). Subsequent runs of the application load from this cached Markdown, significantly reducing API calls and startup time.
+
+-   **Conversational Memory with History-Aware Retriever:**
+    -   Integrated a `History-Aware Retriever` to enable the RAG chatbot to remember previous turns in the conversation.
+    -   The system now intelligently rewrites follow-up questions based on chat history, ensuring more relevant document retrieval and coherent responses.
+    -   The RAG chain has been refactored using LangChain Expression Language (LCEL) for a more modular and robust architecture.
+
+## New Application
+
+-   **`rag_gradio_llamaparser_app.py`:** A new Gradio application demonstrating the LlamaParse integration and conversational memory features. This application serves as the primary example for the enhanced RAG pipeline.
+
+## Bug Fixes and Refinements
+
+-   **Corrected Gradio History Parsing:** Resolved an issue where the `ask_llm` function incorrectly parsed Gradio's `ChatInterface` history format (list of dictionaries), leading to an empty `chat_history` being passed to the RAG chain. The function now correctly converts the history to LangChain's `HumanMessage`/`AIMessage` objects, ensuring proper conversational context.
+-   **Fixed `qa_prompt` Typo:** Corrected a `NameError` caused by a typo (`ga_prompt` instead of `qa_prompt`) in the definition of the final answer generation prompt.
+-   **Strengthened Hallucination Mitigation Prompt:** Enhanced the `qa_system_prompt` with more explicit instructions to the LLM to strictly adhere to the provided context and avoid generating information not present in the document.
+
+---
+
+# Update Log v1.4
+
+This version focuses on a major UI refactoring for simplification and robustness, completes previously planned code updates, and standardizes core library usage.
+
+## UI Refactoring
+
+- **`gr.ChatInterface` Adoption:** The Gradio UI has been refactored to use the high-level `gr.ChatInterface` component. This significantly simplifies the application code by removing the need for manual `gr.Blocks`, `gr.Textbox`, and `gr.Button` event handling (`.click`, `.submit`, `.then`). The `gr.ChatInterface` now natively manages the chat flow, history, and input submission, leading to more robust and maintainable code.
+
+## Core Logic & Library Updates
+
+- **Refactoring Complete (`.invoke()`):** The pending refactoring from v1.2 has been completed. The retriever is now called using `retriever.invoke(query)` instead of the legacy `get_relevant_documents()` method.
+- **Standardized PDF Processing (PyMuPDF):** The PDF processing logic now explicitly and consistently uses the `PyMuPDF` (`fitz`) library with modern methods (`page.get_text("text")`) for reliable text extraction.
+- **LLM Update:** The model has been updated to `gpt-4o-mini` for improved performance and cost-effectiveness.
+
+---
+
 # Update Log v1.3
 
 This version focuses on fixing a critical runtime error in the self-healing mechanism and addressing library deprecation warnings.
