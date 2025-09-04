@@ -16,33 +16,21 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain.memory import ConversationBufferMemory
 
-# 환경변수 로드
+# --- Setup ---
 load_dotenv()
-
-# 메모리 초기화
 memory = ConversationBufferMemory(return_messages=True)
-
-# LLM 모델 초기화
 llm = ChatOpenAI(model="gpt-4o-mini")
 
-# --- Document Loading and Caching ---
-PDF_PATH = "data/gemini-2.5-tech_1-2.pdf"
-PARSED_MD_PATH = "llamaparse_output_gemini_1_2.md"
+PDF_PATH = "data/gemini-2.5-tech_1-10.pdf"
+PARSED_MD_PATH = "llamaparse_output_full.md"
 CHROMA_DB_DIR = "./chroma_db"
 
 # --- RAG Setup ---
-
-# 1. Text Splitters
-parent_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=300)
-child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-
-# 2. Embedding Model
+parent_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=40)
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
-# 3. Vector Store (ChromaDB)
 vectorstore = Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
 
-# 4. ParentDocumentRetriever
 store = InMemoryStore()
 retriever = ParentDocumentRetriever(
     vectorstore=vectorstore,
@@ -51,7 +39,6 @@ retriever = ParentDocumentRetriever(
     parent_splitter=parent_splitter,
 )
 
-# --- Process PDF via LlamaParse and Populate Vector Store ---
 def load_and_populate_vectorstore():
     if vectorstore._collection.count() > 0:
         print("Vector store already populated. Skipping document loading.")
@@ -68,7 +55,6 @@ def load_and_populate_vectorstore():
             documents = parser.load_data(PDF_PATH)
             with open(PARSED_MD_PATH, "w", encoding="utf-8") as f:
                 f.write("\n".join([doc.text for doc in documents]))
-
             print(f"Successfully parsed and saved to '{PARSED_MD_PATH}'")
         except Exception as e:
             print(f"LlamaParse processing error: {e}")
@@ -86,14 +72,10 @@ def load_and_populate_vectorstore():
         print(f"Error loading or processing markdown file: {e}")
 
 # --- Conversational RAG Chain Setup ---
-
-# 1. Prompt for History-Aware Retriever
 contextualize_q_system_prompt = (
-    "Given a chat history and the latest user question "
-    "which might reference context in the chat history, "
-    "formulate a standalone question which can be understood "
-    "without the chat history. Do NOT answer the question, "
-    "just reformulate it if needed and otherwise return it as is."
+    "Given a chat history and the latest user question which might reference context "
+    "in the chat history, formulate a standalone question.\n"
+    "Do NOT answer the question."
 )
 contextualize_q_prompt = ChatPromptTemplate.from_messages(
     [
@@ -102,98 +84,54 @@ contextualize_q_prompt = ChatPromptTemplate.from_messages(
         ("human", "{input}"),
     ]
 )
+history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
-# 2. Create the History-Aware Retriever
-history_aware_retriever = create_history_aware_retriever(
-    llm, retriever, contextualize_q_prompt
-)
-
-# 3. Prompt for Final Answer Generation
+# ===== FIXED PART =====
 ga_system_prompt = (
-    "You are an assistant for question-answering tasks. Answer the user's question based on the provided context."
-    "If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise."
+    "You are an assistant for question-answering tasks. "
+    "Answer the user's question based on the provided context. "
+    "If you don't know the answer, say you don't know. "
+    "Use three sentences maximum and keep the answer concise.\n\n"
+    "Context:\n{context}"
 )
 ga_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", ga_system_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),
-        MessagesPlaceholder(variable_name="context"),
+        MessagesPlaceholder(variable_name="chat_history"),  # keep as messages
         ("human", "{input}"),
     ]
 )
+# ======================
 
-
-# 4. Create the Document Chain
 question_answer_chain = create_stuff_documents_chain(llm, ga_prompt)
-
-# 5. Create the full RAG chain
 rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-
-# --- RAG Function ---
 def ask_llm(query, history):
+    # history는 Gradio가 주는 대화 이력이지만, 우리는 LangChain 메모리를 사용
     chat_history = memory.load_memory_variables({})["history"]
     try:
         response = rag_chain.invoke({"input": query, "chat_history": chat_history})
         answer = response["answer"]
-        retrieved_docs = response["context"]
-        
-        context_text = "## 참조 문서\n\n"
-        if retrieved_docs:
-            for i, doc in enumerate(retrieved_docs):
-                context_text += f"### 문서 {i+1}\n"
-                context_text += f"```\n{doc.page_content}\n```\n\n"
-        else:
-            context_text += "참조된 문서가 없습니다."
-
         memory.save_context({"input": query}, {"output": answer})
-        
-        history.append([query, answer])
-        
-        return history, context_text
+        return answer
     except Exception as e:
-        history.append([query, f"An error occurred: {e}"])
-        return history, f"오류 발생: {e}"
+        return f"An error occurred: {e}"
 
 # --- Gradio Interface ---
 load_and_populate_vectorstore()
-
-example_questions_doc_content = [
-    "Gemini 2.5는 어떤 모델 계열로 설명되고 있나요?",
-    "문서에서 강조하는 Gemini 2.5의 주요 특징은 무엇인가요?",
-    "Gemini 2.5의 성능이 어떤 평가 지표를 기준으로 설명되고 있나요?",
-    "Gemini 2.5 모델 크기나 변형(variants)에 대한 언급이 있나요?",
-    "Gemini 2.5는 어떤 방식으로 기존 모델 대비 개선되었다고 하나요?"
-]
-
-example_questions_excel = [
-    "엑셀(표)에서 Gemini 2.5와 다른 모델들의 성능 비교 결과는 어떻게 나오나요?",
-    "표에 따르면 Gemini 2.5가 수학/코딩 분야에서 어떤 성능을 보이나요?",
-    "엑셀표에 MMLU 점수가 기재되어 있나요? 있다면 Gemini 2.5의 점수는 얼마인가요?",
-    "표에서 경쟁 모델과 Gemini 2.5의 차이가 가장 크게 나타나는 분야는 어디인가요?",
-    "엑셀표 형식 데이터가 잘 불러와졌는지 확인하기 위해, 문서 내 첫 번째 표의 항목 이름을 나열해줄래요?"
-]
+example_questions = ["Gemini 2.5는 무엇인가요?", "주요 기능은 무엇인가요?", "이 문서에 어떤 내용이 있나요?"]
 
 with gr.Blocks(theme="soft", title="PDF RAG Chatbot") as demo:
     gr.Markdown("# PDF RAG Chatbot (LlamaParse + Conversational)")
     gr.Markdown("PDF 문서 내용에 대해 질문하세요. (대화 내용 기억 기능 포함)")
-    
+
     gr.ChatInterface(
         fn=ask_llm,
         chatbot=gr.Chatbot(height=400, type='messages'),
         theme="soft"
     ).render()
 
-    gr.Examples(
-        examples=example_questions_doc_content,
-        inputs=[gr.Textbox(label="질문 입력")],
-        label="문서 내용 확인용 질문"
-    )
-
-    gr.Examples(
-        examples=example_questions_excel,
-        inputs=[gr.Textbox(label="질문 입력")],
-        label="엑셀표 로드 확인용 질문"
-    )
+    # (선택) ChatInterface와 혼용 시 예제 위젯은 제거하거나 별도 입력 컴포넌트로 구성 권장
+    # gr.Examples(examples=example_questions, inputs=[gr.Textbox(label="질문 입력")], label="예시 질문")
 
 demo.launch()

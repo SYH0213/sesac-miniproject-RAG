@@ -14,16 +14,12 @@ from langchain.chains import create_history_aware_retriever, create_retrieval_ch
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain.memory import ConversationBufferMemory
 
 # 환경변수 로드
 load_dotenv()
 
-# 메모리 초기화
-memory = ConversationBufferMemory(return_messages=True)
-
 # LLM 모델 초기화
-llm = ChatOpenAI(model="gpt-4o-mini")
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 # --- Document Loading and Caching ---
 PDF_PATH = "data/gemini-2.5-tech_1-2.pdf"
@@ -110,17 +106,19 @@ history_aware_retriever = create_history_aware_retriever(
 
 # 3. Prompt for Final Answer Generation
 ga_system_prompt = (
-    "You are an assistant for question-answering tasks. Answer the user's question based on the provided context."
-    "If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise."
+    "You are a helpful assistant. Your ONLY task is to answer the user's question STRICTLY based on the provided context. "
+    "If the information to answer the question is present in the context, provide a concise answer. "
+    "If the answer cannot be found within the provided context, you MUST say '제공된 문서의 내용으로는 답변할 수 없습니다.' Do NOT use any of your outside knowledge."
+    "\n\nContext:\n{context}"
 )
 ga_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", ga_system_prompt),
         MessagesPlaceholder(variable_name="chat_history"),
-        MessagesPlaceholder(variable_name="context"),
         ("human", "{input}"),
     ]
 )
+
 
 
 # 4. Create the Document Chain
@@ -132,12 +130,50 @@ rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chai
 
 # --- RAG Function ---
 def ask_llm(query, history):
-    chat_history = memory.load_memory_variables({})["history"]
+    # 1. Convert Gradio's history to LangChain's format
+    chat_history_for_chain = []
+    if history:
+        for message in history:
+            if message["role"] == "user":
+                chat_history_for_chain.append(HumanMessage(content=message["content"]))
+            elif message["role"] == "assistant":
+                chat_history_for_chain.append(AIMessage(content=message["content"]))
+
     try:
-        response = rag_chain.invoke({"input": query, "chat_history": chat_history})
-        answer = response["answer"]
-        retrieved_docs = response["context"]
+        # --- DEBUGGING STARTS HERE ---
+        print("\n" + "="*50)
+        print(f"DEBUG: Current Query: {query}")
         
+        print("\n--- 1. Invoking History-Aware Retriever to get documents ---")
+        # This retriever will first reformulate the question and then retrieve docs
+        retrieved_docs = history_aware_retriever.invoke({
+            "input": query,
+            "chat_history": chat_history_for_chain
+        })
+        print(f"\n--- 2. Retriever found {len(retrieved_docs)} documents. ---")
+        if retrieved_docs:
+            for i, doc in enumerate(retrieved_docs):
+                # metadata might not exist, so use .get() 
+                source = doc.metadata.get('source', 'N/A') if hasattr(doc, 'metadata') else 'N/A'
+                print(f"--- Document {i+1} (Source: {source}) ---")
+                print(doc.page_content[:300] + "...") # Print snippet
+                print("-"*(len(f"--- Document {i+1} (Source: {source}) ---")))
+        print("\n" + "="*50)
+
+        print("\n--- 3. Invoking Document Chain to generate answer ---")
+        # The input for the next chain requires all keys from the prompt
+        final_input = {
+            "input": query,
+            "chat_history": chat_history_for_chain,
+            "context": retrieved_docs
+        }
+        answer = question_answer_chain.invoke(final_input)
+        print(f"\n--- 4. Final Answer Generated ---")
+        print(answer)
+        print("="*50 + "\n")
+        # --- DEBUGGING ENDS HERE ---
+
+        # Format context for display
         context_text = "## 참조 문서\n\n"
         if retrieved_docs:
             for i, doc in enumerate(retrieved_docs):
@@ -146,14 +182,28 @@ def ask_llm(query, history):
         else:
             context_text += "참조된 문서가 없습니다."
 
-        memory.save_context({"input": query}, {"output": answer})
+        # Update Gradio history
+        if not history:
+            history = []
+        history.append({"role": "user", "content": query})
+        history.append({"role": "assistant", "content": answer})
         
-        history.append([query, answer])
+        return "", history, context_text
         
-        return history, context_text
     except Exception as e:
-        history.append([query, f"An error occurred: {e}"])
-        return history, f"오류 발생: {e}"
+        error_message = f"오류 발생: {e}"
+        # Add extensive debug info to the error message
+        debug_info = f"\n\nDEBUG INFO:\nQuery: {query}\nHistory: {history}"
+        full_error = f"{error_message}{debug_info}"
+        print(f"ERROR in ask_llm: {full_error}") # Also print to console
+
+        if not history:
+            history = []
+        history.append({"role": "user", "content": query})
+        history.append({"role": "assistant", "content": error_message})
+        return "", history, "참조된 문서가 없습니다."
+
+
 
 # --- Gradio Interface ---
 load_and_populate_vectorstore()
@@ -178,22 +228,30 @@ with gr.Blocks(theme="soft", title="PDF RAG Chatbot") as demo:
     gr.Markdown("# PDF RAG Chatbot (LlamaParse + Conversational)")
     gr.Markdown("PDF 문서 내용에 대해 질문하세요. (대화 내용 기억 기능 포함)")
     
-    gr.ChatInterface(
-        fn=ask_llm,
-        chatbot=gr.Chatbot(height=400, type='messages'),
-        theme="soft"
-    ).render()
+    with gr.Row():
+        with gr.Column(scale=2):
+            chatbot = gr.Chatbot(height=400, label="Chat", type='messages', value=[])
+            msg = gr.Textbox(label="질문을 입력하세요...")
+            
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("### 문서 내용 확인용")
+                    gr.Examples(
+                        examples=example_questions_doc_content,
+                        inputs=msg,
+                        label="문서 내용 확인용 질문"
+                    )
+                with gr.Column():
+                    gr.Markdown("### 엑셀표 로드 확인용")
+                    gr.Examples(
+                        examples=example_questions_excel,
+                        inputs=msg,
+                        label="엑셀표 로드 확인용 질문"
+                    )
+        with gr.Column(scale=1):
+            context_display = gr.Markdown(label="LLM 참조 문서 전문")
 
-    gr.Examples(
-        examples=example_questions_doc_content,
-        inputs=[gr.Textbox(label="질문 입력")],
-        label="문서 내용 확인용 질문"
-    )
-
-    gr.Examples(
-        examples=example_questions_excel,
-        inputs=[gr.Textbox(label="질문 입력")],
-        label="엑셀표 로드 확인용 질문"
-    )
+    clear = gr.ClearButton([msg, chatbot, context_display])
+    msg.submit(ask_llm, [msg, chatbot], [msg, chatbot, context_display])
 
 demo.launch()

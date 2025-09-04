@@ -16,33 +16,30 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain.memory import ConversationBufferMemory
 
-# 환경변수 로드
+# ===================== 기본 설정 =====================
 load_dotenv()
 
-# 메모리 초기화
+# 대화 메모리 (메시지 리스트 반환)
 memory = ConversationBufferMemory(return_messages=True)
 
-# LLM 모델 초기화
-llm = ChatOpenAI(model="gpt-4o-mini")
+# LLM (헛소리/외부지식 최소화를 위해 temperature=0 권장)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-# --- Document Loading and Caching ---
+# 파일 경로
 PDF_PATH = "data/gemini-2.5-tech_1-2.pdf"
 PARSED_MD_PATH = "llamaparse_output_gemini_1_2.md"
 CHROMA_DB_DIR = "./chroma_db"
 
-# --- RAG Setup ---
-
-# 1. Text Splitters
+# ===================== RAG 구성 =====================
+# 1) 스플리터
 parent_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=300)
 child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 
-# 2. Embedding Model
+# 2) 임베딩 + 벡터스토어
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
-# 3. Vector Store (ChromaDB)
 vectorstore = Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embeddings)
 
-# 4. ParentDocumentRetriever
+# 3) ParentDocumentRetriever
 store = InMemoryStore()
 retriever = ParentDocumentRetriever(
     vectorstore=vectorstore,
@@ -51,12 +48,17 @@ retriever = ParentDocumentRetriever(
     parent_splitter=parent_splitter,
 )
 
-# --- Process PDF via LlamaParse and Populate Vector Store ---
+# ===================== 문서 적재/색인 =====================
 def load_and_populate_vectorstore():
-    if vectorstore._collection.count() > 0:
-        print("Vector store already populated. Skipping document loading.")
-        return
+    try:
+        # 이미 색인되어 있으면 스킵
+        if hasattr(vectorstore, "_collection") and vectorstore._collection.count() > 0:
+            print("Vector store already populated. Skipping document loading.")
+            return
+    except Exception:
+        pass  # 버전 차이 대비
 
+    # 파싱된 마크다운 없으면 LlamaParse 수행
     if not os.path.exists(PARSED_MD_PATH):
         print(f"'{PARSED_MD_PATH}' not found. Processing PDF with LlamaParse...")
         api_key = os.getenv("LLAMA_CLOUD_API_KEY")
@@ -68,32 +70,32 @@ def load_and_populate_vectorstore():
             documents = parser.load_data(PDF_PATH)
             with open(PARSED_MD_PATH, "w", encoding="utf-8") as f:
                 f.write("\n".join([doc.text for doc in documents]))
-
             print(f"Successfully parsed and saved to '{PARSED_MD_PATH}'")
         except Exception as e:
             print(f"LlamaParse processing error: {e}")
             return
     
+    # 마크다운 로드 후 색인
     print(f"Loading document from '{PARSED_MD_PATH}'...")
     try:
         with open(PARSED_MD_PATH, "r", encoding="utf-8") as f:
             text = f.read()
-        documents = [Document(page_content=text)]
+        docs = [Document(page_content=text)]
         print("Adding documents to vector store...")
-        retriever.add_documents(documents)
-        print(f"Vector store populated with {vectorstore._collection.count()} documents.")
+        retriever.add_documents(docs)
+        try:
+            print(f"Vector store populated with {vectorstore._collection.count()} documents.")
+        except Exception:
+            print("Vector store populated.")
     except Exception as e:
         print(f"Error loading or processing markdown file: {e}")
 
-# --- Conversational RAG Chain Setup ---
-
-# 1. Prompt for History-Aware Retriever
+# ===================== 체인 구성 =====================
+# (1) 히스토리 인지형 리트리버용 프롬프트
 contextualize_q_system_prompt = (
-    "Given a chat history and the latest user question "
-    "which might reference context in the chat history, "
-    "formulate a standalone question which can be understood "
-    "without the chat history. Do NOT answer the question, "
-    "just reformulate it if needed and otherwise return it as is."
+    "Given a chat history and the latest user question which might reference context in the chat history, "
+    "formulate a standalone question which can be understood without the chat history. "
+    "Do NOT answer the question, just reformulate it if needed and otherwise return it as is."
 )
 contextualize_q_prompt = ChatPromptTemplate.from_messages(
     [
@@ -103,59 +105,64 @@ contextualize_q_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-# 2. Create the History-Aware Retriever
+# (2) 히스토리 인지형 리트리버 생성
 history_aware_retriever = create_history_aware_retriever(
     llm, retriever, contextualize_q_prompt
 )
 
-# 3. Prompt for Final Answer Generation
+# (3) 최종 답변 프롬프트 (context는 문자열로 주입)
 ga_system_prompt = (
-    "You are an assistant for question-answering tasks. Answer the user's question based on the provided context."
-    "If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise."
+    "You are an assistant for question-answering tasks. "
+    "Answer ONLY with information from the provided context. "
+    "If you don't know the answer, say you don't know. "
+    "Use up to three sentences. Be concise."
 )
 ga_prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", ga_system_prompt),
+        ("system", ga_system_prompt + "\n\n[Context]\n{context}"),
         MessagesPlaceholder(variable_name="chat_history"),
-        MessagesPlaceholder(variable_name="context"),
         ("human", "{input}"),
     ]
 )
 
-
-# 4. Create the Document Chain
+# (4) 문서 결합 체인 + RAG 체인
 question_answer_chain = create_stuff_documents_chain(llm, ga_prompt)
-
-# 5. Create the full RAG chain
 rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
+# ===================== 질의 함수 =====================
+def ask_llm(query: str, history: list):
+    # 메모리에서 대화 이력 로드
+    chat_history = memory.load_memory_variables({}).get("history", [])
 
-# --- RAG Function ---
-def ask_llm(query, history):
-    chat_history = memory.load_memory_variables({})["history"]
     try:
         response = rag_chain.invoke({"input": query, "chat_history": chat_history})
-        answer = response["answer"]
-        retrieved_docs = response["context"]
-        
+        answer = response.get("answer", "")
+
+        # 외부로 보여줄 컨텍스트(사이드 패널)
+        retrieved = response.get("context", None)
         context_text = "## 참조 문서\n\n"
-        if retrieved_docs:
-            for i, doc in enumerate(retrieved_docs):
-                context_text += f"### 문서 {i+1}\n"
-                context_text += f"```\n{doc.page_content}\n```\n\n"
+        if isinstance(retrieved, list) and len(retrieved) > 0:
+            for i, doc in enumerate(retrieved):
+                content = getattr(doc, "page_content", str(doc))
+                context_text += f"### 문서 {i+1}\n```\n{content}\n```\n\n"
+        elif isinstance(retrieved, str) and retrieved.strip():
+            context_text += f"```\n{retrieved}\n```\n"
         else:
             context_text += "참조된 문서가 없습니다."
 
+        # 메모리에 현재 질의/응답 저장
         memory.save_context({"input": query}, {"output": answer})
-        
-        history.append([query, answer])
-        
-        return history, context_text
-    except Exception as e:
-        history.append([query, f"An error occurred: {e}"])
-        return history, f"오류 발생: {e}"
 
-# --- Gradio Interface ---
+        # ChatInterface 규약: 첫 번째는 어시스턴트 메시지(문자열), 그 뒤로 additional_outputs
+        return answer, context_text
+
+    except Exception as e:
+        err = f"오류 발생: {e}"
+        # ❗예외 시에도 첫 번째 리턴은 반드시 문자열로!
+        fallback_context = "## 참조 문서\n\n(에러로 인해 컨텍스트 표시 불가)\n"
+        return err, fallback_context
+
+# ===================== UI =====================
 load_and_populate_vectorstore()
 
 example_questions_doc_content = [
@@ -177,23 +184,31 @@ example_questions_excel = [
 with gr.Blocks(theme="soft", title="PDF RAG Chatbot") as demo:
     gr.Markdown("# PDF RAG Chatbot (LlamaParse + Conversational)")
     gr.Markdown("PDF 문서 내용에 대해 질문하세요. (대화 내용 기억 기능 포함)")
-    
-    gr.ChatInterface(
-        fn=ask_llm,
-        chatbot=gr.Chatbot(height=400, type='messages'),
-        theme="soft"
-    ).render()
 
-    gr.Examples(
-        examples=example_questions_doc_content,
-        inputs=[gr.Textbox(label="질문 입력")],
-        label="문서 내용 확인용 질문"
-    )
+    with gr.Row():
+        with gr.Column(scale=2):
+            # 사이드 패널로 보여줄 컨텍스트 컴포넌트(추가 출력 바인딩)
+            context_display = gr.Markdown(label="LLM 참조 문서 전문")
 
-    gr.Examples(
-        examples=example_questions_excel,
-        inputs=[gr.Textbox(label="질문 입력")],
-        label="엑셀표 로드 확인용 질문"
-    )
+            chat = gr.ChatInterface(
+                fn=ask_llm,
+                chatbot=gr.Chatbot(height=400, type="messages"),
+                additional_outputs=[context_display],
+                examples=example_questions_doc_content + example_questions_excel,
+                cache_examples=False,
+                theme="soft"
+            )
+            chat.render()
+
+            with gr.Accordion("예시 질문 카테고리 보기", open=False):
+                gr.Markdown("### 문서 내용 확인용")
+                gr.Markdown("\n".join(f"- {q}" for q in example_questions_doc_content))
+                gr.Markdown("### 엑셀표 로드 확인용")
+                gr.Markdown("\n".join(f"- {q}" for q in example_questions_excel))
+
+        with gr.Column(scale=1):
+            gr.Markdown("## LLM 참조 문서 전문")
+            # 위의 context_display와 동일 객체이므로 여기서 그대로 보여짐
+            # (추가로 아무 것도 필요 없음)
 
 demo.launch()
