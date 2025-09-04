@@ -1,3 +1,64 @@
+# Update Log v1.8
+
+This version focuses on improving application stability and user experience. Specifically, it resolves the recurring instability of the vector store and enhances the prompt to increase the reliability of the RAG system.
+
+## Core Enhancements
+
+-   **Added and Stabilized "Force Reload" for Vector Store:**
+    -   To address the issue where the vector store would intermittently become corrupted and fail document retrieval, a "🔄 Force Reload Vector Store" button was added to the UI.
+    -   The initial implementation using `delete_collection` failed in certain inconsistent states. The logic has been improved to use the more robust internal `client.reset()` method to initialize the database. This allows users to reliably reset the vector store with a single click, without restarting the app or manually deleting folders.
+
+-   **Prompt Hardening (Hallucination Suppression):**
+    -   To prevent the chatbot from answering questions based on its own knowledge when the answer is not in the provided document (hallucination), the system prompt has been significantly strengthened.
+    -   The prompt now explicitly instructs the model to "STRICTLY base the answer on the provided context" and to "NOT use any of its outside knowledge."
+    -   It is now forced to reply with a specific phrase ("제공된 문서의 내용으로는 답변할 수 없습니다.") if the answer cannot be found, improving the reliability of the RAG system.
+
+-   **Debugging Logs Restored:**
+    -   Per user request, detailed debugging logs that output the results of each stage of the RAG chain (document retrieval, final answer generation) to the terminal have been re-added to facilitate easier troubleshooting.
+
+---
+
+# Update Log v1.7
+
+## New Features
+
+-   **Context Visualization Feature Added:**
+    -   Created a new Gradio application, `rag_gradio_llamaparser_with_context_app.py`, to provide an advanced UI.
+    -   This application features a split layout: the chat interface on the left and a dedicated panel on the right to display the full text of the documents referenced by the LLM.
+    -   The `ask_llm` function was modified to return both the chat history and the retrieved context, allowing the Gradio UI to dynamically update the context panel.
+    -   The `ga_prompt` was corrected to ensure proper handling of context as a list of messages, resolving previous `ValueError` issues.
+
+---
+
+# Update Log v1.6
+
+This version includes significant bug fixes, memory management improvements, and UI enhancements for better user experience and RAG chain robustness.
+
+## Bug Fixes
+
+-   **Resolved `NameError: name 'qa_prompt' is not defined`:** Corrected a typo in the final answer generation prompt, changing `qa_prompt` to `ga_prompt`.
+-   **Resolved `ValueError: Prompt must accept context as an input variable`:** Reordered the `MessagesPlaceholder` for `context` in the final answer generation prompt (`ga_prompt`) to ensure it correctly receives a list of document messages.
+
+## Improvements & Refinements
+
+-   **Enhanced Conversational Memory Integration:**
+    -   Switched from direct Gradio history parsing to using `langchain.memory.ConversationBufferMemory` for managing chat history. This provides a more robust and standard way to handle conversational context within the RAG chain.
+    -   The `ask_llm` function now loads chat history from `memory` and saves the current interaction after generating a response.
+-   **Improved Example Questions Layout in Gradio UI:**
+    -   Restructured the Gradio interface to display example questions in two distinct columns with clear headings ("문서 내용 확인용" and "엑셀표 로드 확인용").
+    -   The example questions are now dynamically linked to the main chat input, allowing users to easily populate the input field by clicking on an example.
+-   **Updated PDF Source for RAG Chain:**
+    -   Changed the primary PDF document for the RAG chain from `data/gemini-2.5-tech_1-10.pdf` to `data/gemini-2.5-tech_1-2.pdf` to focus on a smaller data range.
+    -   Updated the corresponding `PARSED_MD_PATH` to `llamaparse_output_gemini_1_2.md`.
+
+## New Tooling
+
+-   **`chunk_visualizer_for_gemini_pdf.py`:**
+    -   A new Gradio application created to visualize text splitting for `data/gemini-2.5-tech_1-2.pdf`.
+    -   Includes integrated LlamaParse generation logic: if `llamaparse_output_gemini_1_2.md` does not exist, the script will automatically attempt to parse `data/gemini-2.5-tech_1-2.pdf` using LlamaParse and save the output, making the visualizer self-contained.
+
+---
+
 # Update Log v1.5
 
 This version introduces significant enhancements to the RAG application's document processing and conversational capabilities. A new application, `rag_gradio_llamaparser_app.py`, has been created to demonstrate these features.
@@ -16,12 +77,6 @@ This version introduces significant enhancements to the RAG application's docume
 ## New Application
 
 -   **`rag_gradio_llamaparser_app.py`:** A new Gradio application demonstrating the LlamaParse integration and conversational memory features. This application serves as the primary example for the enhanced RAG pipeline.
-
-## Bug Fixes and Refinements
-
--   **Corrected Gradio History Parsing:** Resolved an issue where the `ask_llm` function incorrectly parsed Gradio's `ChatInterface` history format (list of dictionaries), leading to an empty `chat_history` being passed to the RAG chain. The function now correctly converts the history to LangChain's `HumanMessage`/`AIMessage` objects, ensuring proper conversational context.
--   **Fixed `qa_prompt` Typo:** Corrected a `NameError` caused by a typo (`ga_prompt` instead of `qa_prompt`) in the definition of the final answer generation prompt.
--   **Strengthened Hallucination Mitigation Prompt:** Enhanced the `qa_system_prompt` with more explicit instructions to the LLM to strictly adhere to the provided context and avoid generating information not present in the document.
 
 ---
 
@@ -69,12 +124,6 @@ This version includes further bug fixes, robustness improvements, and UI enhance
 - **Vector Store Self-Healing:** Implemented a mechanism to automatically detect and re-populate the ChromaDB vector store if no relevant documents are retrieved despite the store appearing populated. This enhances robustness against inconsistent states.
 - **UI Enhancement (Permanent Examples):** Modified the Gradio interface to display example questions permanently below the chat input using `gr.Blocks` and `gr.Examples`, improving user guidance.
 
-## Pending Code Refactoring (Planned for future versions)
-
-- **Import Cleanup:** Remove duplicate import statements.
-- **LangChain Deprecation Updates:** Update `Chroma` import from `langchain.vectorstores` to `langchain_community.vectorstores` and remove `vectorstore.persist()` calls.
-- **Retriever Method Update:** Change `retriever.get_relevant_documents(query)` to `retriever.invoke(query)`.
-
 ---
 
 # Update Log v1.1
@@ -83,7 +132,7 @@ This version includes bug fixes and minor improvements.
 
 ## Bug Fixes
 
-- **`AttributeError: 'dict' object has no attribute 'page_content''`:** Resolved by ensuring that documents added to the retriever are proper `langchain.schema.Document` objects, not dictionaries.
+- **`AttributeError: 'dict' object has no attribute 'page_content''`:** Resolved by ensuring that the documents added to the retriever are proper `langchain.schema.Document` objects, not dictionaries (`dict`).
 
 ## Improvements
 
@@ -104,20 +153,12 @@ This document summarizes the features implemented in the RAG chatbot up to versi
 ## RAG System Enhancements
 
 - **Text Splitting:** Implemented advanced text splitting using `RecursiveCharacterTextSplitter` from LangChain.
-  - Parent chunks (for LLM context): `chunk_size=2000`, `chunk_overlap=200`
-  - Child chunks (for embedding and retrieval): `chunk_size=400`, `chunk_overlap=40`
 - **Embedding Generation:** Uses OpenAI's `text-embedding-3-small` model to generate embeddings for text chunks.
 - **Vector Store (ChromaDB):** Stores embeddings and text chunks in a persistent ChromaDB instance (`./chroma_db` directory).
 - **Caching:** The vector store is cached. On subsequent runs, if the ChromaDB is already populated, it skips reprocessing the PDF and re-embedding, leading to faster startup times.
 - **ParentDocumentRetriever:** Utilizes `ParentDocumentRetriever` for efficient retrieval of relevant parent documents based on child chunk similarity.
-  - Retrieves top-2 child chunks (`k=2`) and returns their corresponding parent documents.
 
 ## User Interface (Gradio)
 
 - **Interactive Chatbot:** Provides a Gradio web interface for asking questions about the PDF content.
 - **Korean Language Support:** LLM prompt instructs the model to answer in Korean. Example questions in the UI are also in Korean.
-
-## Future Work (Not yet implemented in v1.0)
-
-- **Image-Text Association:** Linking images with relevant text chunks for multimodal RAG.
-- **Table Extraction:** Integrating robust table extraction and formatting into Markdown.
