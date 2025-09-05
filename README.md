@@ -15,20 +15,20 @@
 - `final_rag_1-2.py` → PDF 1~2페이지 RAG
 - `final_rag_3.py` → PDF 3페이지 RAG
 - Gradio UI를 통해 질문 입력, 대화 이력 유지, 참조 문서 확인 가능
-- 표와 본문 내용을 구분하여 질문에 대한 답변 생성
+- 표와 본문 내용에 대한 질문의 답변 생성
 
 ---
 
 ## 📂 폴더 구조
-	project-root/  
-	├── chroma_db/   1-2페이지 벡터스토어 데이터 저장소
-	├── chroma_db2/  3페이지 벡터스토어 데이터 저장소
-	├── loaddata/  LlamaPares 결과파일 저장 폴더
-	├── .env  API 키 등 환경변수 설정 파일
-	├── final_rag_1-2.py  1-2페이지 RAG Gradio 앱 실행 코드
-	├── final_rag_3.py  3페이지 RAG Gradio 앱 실행 코드
-	└── requirements.txt 프로젝트 실행에 필요한 라이브러리 목록	
-	
+    project-root/  
+    ├── chroma_db/   1-2페이지 벡터스토어 데이터 저장소
+    ├── chroma_db2/  3페이지 벡터스토어 데이터 저장소
+    ├── loaddata/  LlamaPares 결과파일 저장 폴더
+    ├── .env  API 키 등 환경변수 설정 파일
+    ├── final_rag_1-2.py  1-2페이지 RAG Gradio 앱 실행 코드
+    ├── final_rag_3.py  3페이지 RAG Gradio 앱 실행 코드
+    └── requirements.txt 프로젝트 실행에 필요한 라이브러리 목록	
+    
 
 ---
 
@@ -91,7 +91,7 @@
 
 ---
 
-## ✅ 다음에 해볼 것
+## ⚠️ 다음에 해볼 것
 - 다양한 설정 변경(청크 크기, 리트리버 종류, 아웃파서 적용 등)을 시도하려고 했으나 시간 부족으로 실행까지 이어지지는 못했음.
 
 ___
