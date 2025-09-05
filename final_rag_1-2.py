@@ -23,7 +23,7 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 # --- Document Loading and Caching ---
 PDF_PATH = "data/gemini-2.5-tech_1-2.pdf"
-PARSED_MD_PATH = "llamaparse_output_gemini_1_2.md"
+PARSED_MD_PATH = "loaddata/llamaparse_output_gemini_1_2.md"
 CHROMA_DB_DIR = "./chroma_db"
 
 # --- RAG Setup ---
