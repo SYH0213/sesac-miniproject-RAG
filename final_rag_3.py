@@ -22,15 +22,15 @@ load_dotenv()
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 # --- Document Loading and Caching ---
-PDF_PATH = "data/gemini-2.5-tech_1-2.pdf"
-PARSED_MD_PATH = "llamaparse_output_gemini_1_2.md"
-CHROMA_DB_DIR = "./chroma_db"
+PDF_PATH = "data/gemini-2.5-tech_3.pdf"
+PARSED_MD_PATH = "llamaparse_output_gemini_3.md"
+CHROMA_DB_DIR = "./chroma_db2"
 
 # --- RAG Setup ---
 
 # 1. Text Splitters
 parent_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=300)
-child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+child_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
 
 # 2. Embedding Model
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
@@ -45,6 +45,7 @@ retriever = ParentDocumentRetriever(
     docstore=store,
     child_splitter=child_splitter,
     parent_splitter=parent_splitter,
+    search_kwargs={"k":2}
 )
 
 # --- Data Loading and Vector Store Population ---
@@ -211,19 +212,9 @@ def force_reload_vectorstore():
 load_and_populate_vectorstore()
 
 example_questions_doc_content = [
-    "Gemini 2.5는 어떤 모델 계열로 설명되고 있나요?",
-    "문서에서 강조하는 Gemini 2.5의 주요 특징은 무엇인가요?",
-    "Gemini 2.5의 성능이 어떤 평가 지표를 기준으로 설명되고 있나요?",
-    "Gemini 2.5 모델 크기나 변형(variants)에 대한 언급이 있나요?",
-    "Gemini 2.5는 어떤 방식으로 기존 모델 대비 개선되었다고 하나요?"
-]
-
-example_questions_excel = [
-    "엑셀(표)에서 Gemini 2.5와 다른 모델들의 성능 비교 결과는 어떻게 나오나요?",
-    "표에 따르면 Gemini 2.5가 수학/코딩 분야에서 어떤 성능을 보이나요?",
-    "엑셀표에 MMLU 점수가 기재되어 있나요? 있다면 Gemini 2.5의 점수는 얼마인가요?",
-    "표에서 경쟁 모델과 Gemini 2.5의 차이가 가장 크게 나타나는 분야는 어디인가요?",
-    "엑셀표 형식 데이터가 잘 불러와졌는지 확인하기 위해, 문서 내 첫 번째 표의 항목 이름을 나열해줄래요?"
+    "Gemini 2.5 Pro는 Gemini 1.5 Pro와 비교했을 때 어떤 점에서 향상되었나요?",
+    "Gemini 2.5 Pro와 Flash는 어떤 종류의 데이터를 처리할 수 있나요?",
+    "Gemini 2.5 시리즈의 작은 모델들은 어떤 방식으로 성능을 개선했나요?",
 ]
 
 with gr.Blocks(theme="soft", title="PDF RAG Chatbot") as demo:
@@ -242,13 +233,6 @@ with gr.Blocks(theme="soft", title="PDF RAG Chatbot") as demo:
                         examples=example_questions_doc_content,
                         inputs=msg,
                         label="문서 내용 확인용 질문"
-                    )
-                with gr.Column():
-                    gr.Markdown("### 엑셀표 로드 확인용")
-                    gr.Examples(
-                        examples=example_questions_excel,
-                        inputs=msg,
-                        label="엑셀표 로드 확인용 질문"
                     )
         with gr.Column(scale=1):
             context_display = gr.Markdown(label="LLM 참조 문서 전문")

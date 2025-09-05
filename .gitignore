@@ -2,5 +2,8 @@ data/*.db
 .env
 
 */__pycache__
-/chroma_db/*
 chroma_db
+chroma_db2
+dummy
+.gradio
+.obsidian

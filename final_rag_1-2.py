@@ -30,7 +30,7 @@ CHROMA_DB_DIR = "./chroma_db"
 
 # 1. Text Splitters
 parent_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=300)
-child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+child_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
 
 # 2. Embedding Model
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
@@ -47,12 +47,14 @@ retriever = ParentDocumentRetriever(
     parent_splitter=parent_splitter,
 )
 
-# --- Process PDF via LlamaParse and Populate Vector Store ---
+# --- Data Loading and Vector Store Population ---
 def load_and_populate_vectorstore():
+    # Step 1: Check if the vector store is already populated.
     if vectorstore._collection.count() > 0:
-        print("Vector store already populated. Skipping document loading.")
+        print(f"Vector store already populated with {vectorstore._collection.count()} documents. Skipping.")
         return
 
+    # Step 2: If not populated, check for the parsed markdown file.
     if not os.path.exists(PARSED_MD_PATH):
         print(f"'{PARSED_MD_PATH}' not found. Processing PDF with LlamaParse...")
         api_key = os.getenv("LLAMA_CLOUD_API_KEY")
@@ -64,12 +66,12 @@ def load_and_populate_vectorstore():
             documents = parser.load_data(PDF_PATH)
             with open(PARSED_MD_PATH, "w", encoding="utf-8") as f:
                 f.write("\n".join([doc.text for doc in documents]))
-
             print(f"Successfully parsed and saved to '{PARSED_MD_PATH}'")
         except Exception as e:
             print(f"LlamaParse processing error: {e}")
             return
     
+    # Step 3: Load the document and add to the vector store.
     print(f"Loading document from '{PARSED_MD_PATH}'...")
     try:
         with open(PARSED_MD_PATH, "r", encoding="utf-8") as f:
@@ -119,18 +121,11 @@ ga_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-
-
 # 4. Create the Document Chain
 question_answer_chain = create_stuff_documents_chain(llm, ga_prompt)
 
-# 5. Create the full RAG chain
-rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-
-
 # --- RAG Function ---
 def ask_llm(query, history):
-    # 1. Convert Gradio's history to LangChain's format
     chat_history_for_chain = []
     if history:
         for message in history:
@@ -145,7 +140,6 @@ def ask_llm(query, history):
         print(f"DEBUG: Current Query: {query}")
         
         print("\n--- 1. Invoking History-Aware Retriever to get documents ---")
-        # This retriever will first reformulate the question and then retrieve docs
         retrieved_docs = history_aware_retriever.invoke({
             "input": query,
             "chat_history": chat_history_for_chain
@@ -153,15 +147,13 @@ def ask_llm(query, history):
         print(f"\n--- 2. Retriever found {len(retrieved_docs)} documents. ---")
         if retrieved_docs:
             for i, doc in enumerate(retrieved_docs):
-                # metadata might not exist, so use .get() 
                 source = doc.metadata.get('source', 'N/A') if hasattr(doc, 'metadata') else 'N/A'
                 print(f"--- Document {i+1} (Source: {source}) ---")
-                print(doc.page_content[:300] + "...") # Print snippet
+                print(doc.page_content[:300] + "...")
                 print("-"*(len(f"--- Document {i+1} (Source: {source}) ---")))
         print("\n" + "="*50)
 
         print("\n--- 3. Invoking Document Chain to generate answer ---")
-        # The input for the next chain requires all keys from the prompt
         final_input = {
             "input": query,
             "chat_history": chat_history_for_chain,
@@ -173,7 +165,6 @@ def ask_llm(query, history):
         print("="*50 + "\n")
         # --- DEBUGGING ENDS HERE ---
 
-        # Format context for display
         context_text = "## 참조 문서\n\n"
         if retrieved_docs:
             for i, doc in enumerate(retrieved_docs):
@@ -182,7 +173,6 @@ def ask_llm(query, history):
         else:
             context_text += "참조된 문서가 없습니다."
 
-        # Update Gradio history
         if not history:
             history = []
         history.append({"role": "user", "content": query})
@@ -192,10 +182,9 @@ def ask_llm(query, history):
         
     except Exception as e:
         error_message = f"오류 발생: {e}"
-        # Add extensive debug info to the error message
         debug_info = f"\n\nDEBUG INFO:\nQuery: {query}\nHistory: {history}"
         full_error = f"{error_message}{debug_info}"
-        print(f"ERROR in ask_llm: {full_error}") # Also print to console
+        print(f"ERROR in ask_llm: {full_error}")
 
         if not history:
             history = []
@@ -203,7 +192,20 @@ def ask_llm(query, history):
         history.append({"role": "assistant", "content": error_message})
         return "", history, "참조된 문서가 없습니다."
 
-
+# --- Vector Store Management Function ---
+def force_reload_vectorstore():
+    print("---" + " Forcing reload of vector store ---")
+    try:
+        print("Attempting to reset the collection via chromadb client...")
+        vectorstore._client.reset()
+        print("Successfully reset the chromadb client.")
+        
+        load_and_populate_vectorstore()
+        return "✅ Vector store reloaded successfully!"
+    except Exception as e:
+        error_msg = f"❌ Error during vector store reload: {e}"
+        print(error_msg)
+        return error_msg
 
 # --- Gradio Interface ---
 load_and_populate_vectorstore()
@@ -211,17 +213,15 @@ load_and_populate_vectorstore()
 example_questions_doc_content = [
     "Gemini 2.5는 어떤 모델 계열로 설명되고 있나요?",
     "문서에서 강조하는 Gemini 2.5의 주요 특징은 무엇인가요?",
-    "Gemini 2.5의 성능이 어떤 평가 지표를 기준으로 설명되고 있나요?",
-    "Gemini 2.5 모델 크기나 변형(variants)에 대한 언급이 있나요?",
     "Gemini 2.5는 어떤 방식으로 기존 모델 대비 개선되었다고 하나요?"
 ]
 
 example_questions_excel = [
-    "엑셀(표)에서 Gemini 2.5와 다른 모델들의 성능 비교 결과는 어떻게 나오나요?",
-    "표에 따르면 Gemini 2.5가 수학/코딩 분야에서 어떤 성능을 보이나요?",
-    "엑셀표에 MMLU 점수가 기재되어 있나요? 있다면 Gemini 2.5의 점수는 얼마인가요?",
-    "표에서 경쟁 모델과 Gemini 2.5의 차이가 가장 크게 나타나는 분야는 어디인가요?",
-    "엑셀표 형식 데이터가 잘 불러와졌는지 확인하기 위해, 문서 내 첫 번째 표의 항목 이름을 나열해줄래요?"
+    "Gemini 1.5 Pro와 Gemini 2.5 Pro는 입력 길이와 출력 길이에서 어떤 차이가 있나요?",
+    "Gemini 2.0 Flash와 Gemini 2.5 Flash의 출력 모달리티 차이는 무엇인가요?",
+    "Thinking 기능이 없는 모델과 있는 모델은 각각 무엇인가요?",
+    "Knowledge cutoff 기준으로 Gemini 1.5와 Gemini 2.5는 각각 언제까지의 정보를 반영하나요?",
+    "Gemini 2.0 Flash-Lite와 Gemini 2.5 Pro는 어떤 점에서 가장 큰 차이를 보이나요?"
 ]
 
 with gr.Blocks(theme="soft", title="PDF RAG Chatbot") as demo:
@@ -250,8 +250,12 @@ with gr.Blocks(theme="soft", title="PDF RAG Chatbot") as demo:
                     )
         with gr.Column(scale=1):
             context_display = gr.Markdown(label="LLM 참조 문서 전문")
+            with gr.Accordion("⚙️ Advanced Options", open=False):
+                reload_button = gr.Button("🔄 Force Reload Vector Store")
+                reload_status = gr.Markdown()
 
     clear = gr.ClearButton([msg, chatbot, context_display])
     msg.submit(ask_llm, [msg, chatbot], [msg, chatbot, context_display])
+    reload_button.click(force_reload_vectorstore, outputs=reload_status)
 
 demo.launch()
