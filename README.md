@@ -3,11 +3,12 @@
 ## 📌 프로젝트 개요
 - **주제:** Gemini 2.5 기술 논문 PDF 일부(1~3페이지)를 대상으로 한 RAG 기반 Q&A 시스템 구현
 - **목표:** PDF 문서와 표의 내용을 기반으로만 답변하는 챗봇을 구현  
-- **모델 구성:**
-  - LLM: `gpt-4o-mini`
-  - Embeddings: `text-embedding-3-small`
-  - VectorStore: `Chroma`
-  - Retriever: `ParentDocumentRetriever` (부모/자식 청크 구조)
+## 🧩 모델 구성
+- **LLM:** gpt-4o-mini  
+- **Embeddings:** text-embedding-3-small  
+- **VectorStore:** Chroma  
+- **Retriever:** ParentDocumentRetriever (부모/자식 청크 구조)  
+- **Parser/Loader:** LlamaParse (PDF → Markdown 변환 및 로딩)
 
 ---
 
